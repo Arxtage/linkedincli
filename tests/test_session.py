@@ -40,8 +40,8 @@ def test_whoami_parses_me_response() -> None:
                 {
                     "$type": "com.linkedin.voyager.identity.shared.MiniProfile",
                     "entityUrn": "urn:li:fs_miniProfile:abc",
-                    "firstName": "Arman",
-                    "lastName": "Tsaturian",
+                    "firstName": "Alex",
+                    "lastName": "Example",
                     "publicIdentifier": "alex-example",
                     "occupation": "builder",
                 }

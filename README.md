@@ -104,3 +104,7 @@ pytest
 - This is for personal/private use.
 - Live posting tests are intentionally manual because they create real LinkedIn content.
 - If LinkedIn sends you to login or checkpoint flows, refresh the session in your browser first.
+
+## License
+
+MIT
