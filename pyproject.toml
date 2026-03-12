@@ -1,0 +1,39 @@
+[project]
+name = "linkedincli"
+version = "0.1.0"
+description = "Post to LinkedIn from the terminal using your existing browser session."
+readme = "README.md"
+requires-python = ">=3.11"
+dependencies = [
+  "browser-cookie3>=0.20.1",
+  "click>=8.1.7",
+  "playwright>=1.52.0",
+  "requests>=2.32.3",
+]
+
+[project.optional-dependencies]
+dev = [
+  "pytest>=8.3.5",
+  "responses>=0.25.7",
+  "ruff>=0.11.0",
+]
+
+[project.scripts]
+linkedincli = "linkedincli.cli:cli"
+
+[build-system]
+requires = ["setuptools>=69", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools.packages.find]
+include = ["linkedincli*"]
+
+[tool.pytest.ini_options]
+addopts = "-q"
+testpaths = ["tests"]
+
+[tool.ruff]
+line-length = 100
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "B", "UP"]
