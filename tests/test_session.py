@@ -64,6 +64,51 @@ def test_whoami_parses_me_response() -> None:
 
 
 @responses.activate
+def test_whoami_raises_on_bounced_redirect() -> None:
+    responses.get(
+        "https://www.linkedin.com/voyager/api/me",
+        status=302,
+        headers={"location": "https://www.linkedin.com/voyager/api/me"},
+    )
+
+    session = LinkedInSession(
+        cookie_bundle=CookieBundle(
+            browser_name="arc",
+            cookies=[make_cookie("li_at", "token"), make_cookie("JSESSIONID", '"ajax:1"')],
+        )
+    )
+
+    try:
+        session.whoami()
+    except Exception as exc:
+        assert "bounced the request" in str(exc)
+    else:
+        raise AssertionError("Expected bounced redirect to raise an auth error.")
+
+
+@responses.activate
+def test_admin_html_raises_on_rate_limit() -> None:
+    responses.get(
+        "https://www.linkedin.com/company/setup/admin/",
+        status=429,
+    )
+
+    session = LinkedInSession(
+        cookie_bundle=CookieBundle(
+            browser_name="arc",
+            cookies=[make_cookie("li_at", "token"), make_cookie("JSESSIONID", '"ajax:1"')],
+        )
+    )
+
+    try:
+        session.get_admin_setup_html()
+    except Exception as exc:
+        assert "rate-limiting" in str(exc)
+    else:
+        raise AssertionError("Expected rate limit to raise an auth error.")
+
+
+@responses.activate
 def test_discover_pages_from_admin_html() -> None:
     responses.get(
         "https://www.linkedin.com/company/setup/admin/",
@@ -148,3 +193,13 @@ def test_parse_company_slugs_from_html_accepts_public_company_links() -> None:
     '''
 
     assert parse_company_slugs_from_html(html) == ["paperclip", "brutents"]
+
+
+def test_parse_company_slugs_from_html_ignores_asset_paths() -> None:
+    html = '''
+    <img src="/company/large.svg" />
+    <img src="/company/small-on-dark.svg" />
+    <a href="/company/paperclip/admin/">Paperclip</a>
+    '''
+
+    assert parse_company_slugs_from_html(html) == ["paperclip"]

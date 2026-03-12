@@ -18,12 +18,12 @@ USER_AGENT = (
     "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) "
     "AppleWebKit/537.36 (KHTML, like Gecko) Chrome/134.0.0.0 Safari/537.36"
 )
-REQUEST_COOKIE_NAMES = ("li_at", "JSESSIONID")
 COMPANY_LINK_PATTERN = re.compile(
     r"(?:https?://www\.linkedin\.com)?/company/[^\"'\s<]+",
     re.I,
 )
 RESERVED_COMPANY_SLUGS = {"setup"}
+VALID_COMPANY_SLUG = re.compile(r"^[a-z0-9][a-z0-9-]*$")
 
 
 class LinkedInSession:
@@ -38,10 +38,15 @@ class LinkedInSession:
         self.browser_name = self.cookie_bundle.browser_name
         self.timeout = timeout
         self.session = requests.Session()
-        cookie_map = self.cookie_bundle.cookie_map
-        self.session.cookies.update(
-            {name: cookie_map[name] for name in REQUEST_COOKIE_NAMES if name in cookie_map}
-        )
+        for cookie in self.cookie_bundle.cookies:
+            if "linkedin.com" not in cookie.domain:
+                continue
+            self.session.cookies.set(
+                cookie.name,
+                cookie.value,
+                domain=cookie.domain.lstrip("."),
+                path=cookie.path,
+            )
 
     @property
     def headers(self) -> dict[str, str]:
@@ -71,10 +76,21 @@ class LinkedInSession:
 
     def _raise_for_auth(self, response: requests.Response) -> None:
         location = response.headers.get("location", "")
+        if response.status_code == 429:
+            raise AuthenticationError(
+                "LinkedIn is rate-limiting this browser session. "
+                "Open linkedin.com in your browser, wait a moment, and retry."
+            )
         if response.status_code in {401, 403}:
             raise AuthenticationError(
                 "LinkedIn rejected your browser session. Log in again and retry."
             )
+        if 300 <= response.status_code < 400:
+            if location == response.url or not location:
+                raise AuthenticationError(
+                    "LinkedIn bounced the request instead of serving authenticated content. "
+                    "Open linkedin.com in your browser and retry."
+                )
         if "/login" in location or "/checkpoint/" in location:
             raise AuthenticationError(
                 "LinkedIn redirected to login/checkpoint. Refresh your browser session and retry."
@@ -207,6 +223,8 @@ def extract_company_slug(value: str) -> str | None:
 
     slug = segments[1]
     if not slug or slug in RESERVED_COMPANY_SLUGS:
+        return None
+    if not VALID_COMPANY_SLUG.fullmatch(slug):
         return None
 
     if len(segments) == 2:
