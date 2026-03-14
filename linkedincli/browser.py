@@ -280,9 +280,18 @@ def open_post_composer(page: Page) -> None:
         raise BrowserAutomationError(
             "Couldn't find a visible 'Start a post' or 'Create post' button."
         )
-    trigger.click(timeout=5000)
+    tag = trigger.evaluate("el => el.tagName.toLowerCase()")
+    if tag == "a":
+        with page.expect_navigation(wait_until="domcontentloaded", timeout=15000):
+            trigger.click(timeout=5000)
+        try:
+            page.wait_for_load_state("networkidle", timeout=5000)
+        except TimeoutError:
+            page.wait_for_timeout(1500)
+    else:
+        trigger.click(timeout=5000)
     try:
-        page.locator("[role='dialog']").first.wait_for(state="visible", timeout=5000)
+        page.locator("[role='dialog']").first.wait_for(state="visible", timeout=8000)
     except TimeoutError as exc:
         textbox = _first_visible_locator(_textbox_locators(page))
         if textbox is None:
@@ -330,7 +339,13 @@ def publish_post(page: Page) -> str | None:
     post_button.click(timeout=5000)
     deadline = time.monotonic() + 15
     dialog = page.locator("[role='dialog']")
+    success_indicator = page.locator("text=/post successful/i")
     while time.monotonic() < deadline:
+        try:
+            if success_indicator.count() > 0 and success_indicator.first.is_visible():
+                return _extract_post_url(page)
+        except PlaywrightError:
+            pass
         dialog_visible = False
         try:
             dialog_visible = dialog.count() > 0 and dialog.first.is_visible()
@@ -362,6 +377,9 @@ def _post_trigger_locators(page: Page) -> list[Locator]:
             page.locator("button[aria-label*='Create post' i]"),
         ]
     )
+    locators.extend(page.get_by_role("link", name=pattern) for pattern in POST_TRIGGER_PATTERNS)
+    locators.append(page.locator("a.artdeco-button:has-text('Start a post')"))
+    locators.append(page.locator("a.artdeco-button:has-text('Create post')"))
     return locators
 
 
