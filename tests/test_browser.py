@@ -74,6 +74,41 @@ def test_post_helpers_work_on_fixture(playwright_page, tmp_path: Path) -> None:
     assert posted == {"text": "Hello LinkedIn", "files": 1}
 
 
+def test_open_post_composer_handles_company_create_menu(playwright_page) -> None:
+    playwright_page.set_content(
+        '''
+        <html>
+          <body>
+            <button id="create-btn">Create</button>
+            <div id="menu" role="dialog" hidden>
+              <a id="menu-post" href="">Start a post</a>
+            </div>
+            <div id="composer" role="dialog" hidden>
+              <div id="editor" role="textbox" contenteditable="true"></div>
+            </div>
+            <script>
+              const createBtn = document.getElementById('create-btn');
+              const menu = document.getElementById('menu');
+              const menuPost = document.getElementById('menu-post');
+              const composer = document.getElementById('composer');
+              createBtn.addEventListener('click', () => { menu.hidden = false; });
+              menuPost.addEventListener('click', (event) => {
+                event.preventDefault();
+                menu.hidden = true;
+                composer.hidden = false;
+              });
+            </script>
+          </body>
+        </html>
+        '''
+    )
+
+    open_post_composer(playwright_page)
+    set_post_text(playwright_page, "Company page flow works")
+
+    assert playwright_page.locator("#composer").is_visible()
+    assert "Company page flow works" in playwright_page.locator("#editor").inner_text()
+
 
 def test_collect_company_slugs_from_hrefs() -> None:
     hrefs = [
@@ -131,6 +166,37 @@ def test_publish_post_advances_multistep_composer(playwright_page) -> None:
     publish_post(playwright_page)
 
     assert playwright_page.evaluate("() => window.__published") is True
+
+
+
+def test_publish_post_accepts_success_toast_confirmation(playwright_page) -> None:
+    playwright_page.set_content(
+        '''
+        <html>
+          <body>
+            <div id="dialog" role="dialog">
+              <button id="post-btn">Post</button>
+            </div>
+            <script>
+              const dialog = document.getElementById('dialog');
+              const postBtn = document.getElementById('post-btn');
+              postBtn.addEventListener('click', () => {
+                window.__published = true;
+                dialog.innerHTML = `
+                  <h2 style="display:none">Post successful</h2>
+                  <div class="sharing-nba-framework__success-toast-v2">Done</div>
+                `;
+              });
+            </script>
+          </body>
+        </html>
+        '''
+    )
+
+    publish_post(playwright_page)
+
+    assert playwright_page.evaluate("() => window.__published") is True
+
 
 
 def test_extract_member_from_link_candidates() -> None:

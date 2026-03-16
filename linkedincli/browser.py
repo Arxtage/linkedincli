@@ -173,9 +173,21 @@ class LinkedInBrowserClient:
             raise self._decorate_error(BrowserAutomationError(str(exc))) from exc
 
     def _open_page_post_surface(self, target_page: PageIdentity) -> Page:
-        for url in (target_page.admin_url, target_page.public_url):
+        candidate_urls = [
+            f"{LINKEDIN_BASE}/company/{target_page.slug}/admin/feed/posts?share=true",
+            f"{LINKEDIN_BASE}/company/{target_page.slug}/admin/page-posts/published/?share=true",
+            target_page.admin_url,
+            target_page.public_url,
+        ]
+        seen_urls: set[str] = set()
+        for url in candidate_urls:
+            if url in seen_urls:
+                continue
+            seen_urls.add(url)
             page = self.goto_logged_in(url)
-            if has_post_trigger(page):
+            if composer_is_open(page) or has_post_trigger(page):
+                return page
+            if _first_visible_locator(_company_create_trigger_locators(page)) is not None:
                 return page
         raise BrowserAutomationError(
             f"Couldn't find a page post composer for '{target_page.name}'."
@@ -275,7 +287,12 @@ def has_post_trigger(page: Page) -> bool:
 
 
 def open_post_composer(page: Page) -> None:
+    if composer_is_open(page):
+        return
+
     trigger = _first_visible_locator(_post_trigger_locators(page))
+    if trigger is None:
+        trigger = _first_visible_locator(_company_create_trigger_locators(page))
     if trigger is None:
         raise BrowserAutomationError(
             "Couldn't find a visible 'Start a post' or 'Create post' button."
@@ -293,11 +310,32 @@ def open_post_composer(page: Page) -> None:
     try:
         page.locator("[role='dialog']").first.wait_for(state="visible", timeout=8000)
     except TimeoutError as exc:
-        textbox = _first_visible_locator(_textbox_locators(page))
+        textbox = _first_visible_locator(_dialog_textbox_locators(page))
+        if textbox is None:
+            textbox = _first_visible_locator(_textbox_locators(page))
         if textbox is None:
             raise BrowserAutomationError(
                 "LinkedIn opened no obvious post composer dialog."
             ) from exc
+        return
+
+    if composer_is_open(page):
+        return
+
+    post_entry = _first_visible_locator(_company_page_post_menu_locators(page))
+    if post_entry is not None:
+        _open_company_page_post_entry(page, post_entry)
+        if composer_is_open(page):
+            return
+        textbox = _first_visible_locator(_textbox_locators(page))
+        if textbox is not None:
+            return
+
+    textbox = _first_visible_locator(_dialog_textbox_locators(page))
+    if textbox is not None:
+        return
+
+    raise BrowserAutomationError("LinkedIn opened no obvious post composer dialog.")
 
 
 
@@ -339,13 +377,9 @@ def publish_post(page: Page) -> str | None:
     post_button.click(timeout=5000)
     deadline = time.monotonic() + 15
     dialog = page.locator("[role='dialog']")
-    success_indicator = page.locator("text=/post successful/i")
     while time.monotonic() < deadline:
-        try:
-            if success_indicator.count() > 0 and success_indicator.first.is_visible():
-                return _extract_post_url(page)
-        except PlaywrightError:
-            pass
+        if _post_was_published(page):
+            return _extract_post_url(page)
         dialog_visible = False
         try:
             dialog_visible = dialog.count() > 0 and dialog.first.is_visible()
@@ -384,6 +418,17 @@ def _post_trigger_locators(page: Page) -> list[Locator]:
 
 
 
+def _company_create_trigger_locators(page: Page) -> list[Locator]:
+    create_pattern = re.compile(r"^create$", re.I)
+    return [
+        page.get_by_role("button", name=create_pattern),
+        page.get_by_role("link", name=create_pattern),
+        page.locator("button:has-text('Create')"),
+        page.locator("a:has-text('Create')"),
+    ]
+
+
+
 def _post_button_locators(page: Page) -> list[Locator]:
     return [page.get_by_role("button", name=pattern) for pattern in POST_BUTTON_PATTERNS]
 
@@ -404,8 +449,23 @@ def _textbox_locators(page: Page) -> list[Locator]:
 
 
 
+def _dialog_textbox_locators(page: Page) -> list[Locator]:
+    return [page.locator(f"[role='dialog'] {selector}") for selector in TEXTBOX_SELECTORS]
+
+
+
 def _file_input_locators(page: Page) -> list[Locator]:
     return [page.locator(selector) for selector in FILE_INPUT_SELECTORS]
+
+
+
+def _company_page_post_menu_locators(page: Page) -> list[Locator]:
+    return [
+        page.locator("a[data-test-org-menu-item='POSTS']"),
+        page.locator("a[href*='/admin/feed/posts'][href*='share=true']"),
+        page.get_by_role("link", name=re.compile(r"start a post", re.I)),
+        page.locator("a:has-text('Start a post')"),
+    ]
 
 
 
@@ -439,3 +499,48 @@ def _advance_post_flow(page: Page) -> None:
             return
         advance_button.click(timeout=5000)
         page.wait_for_timeout(500)
+
+
+
+def composer_is_open(page: Page) -> bool:
+    return _first_visible_locator(_dialog_textbox_locators(page)) is not None
+
+
+
+def _open_company_page_post_entry(page: Page, post_entry: Locator) -> None:
+    href = post_entry.get_attribute("href")
+    if href:
+        page.goto(urljoin(LINKEDIN_BASE, href), wait_until="domcontentloaded", timeout=30000)
+        try:
+            page.wait_for_load_state("networkidle", timeout=5000)
+        except TimeoutError:
+            page.wait_for_timeout(1500)
+        return
+
+    post_entry.click(timeout=5000)
+    try:
+        page.wait_for_load_state("networkidle", timeout=5000)
+    except TimeoutError:
+        page.wait_for_timeout(1500)
+
+
+
+def _post_was_published(page: Page) -> bool:
+    candidates = [
+        page.locator("text=/post successful/i"),
+        page.locator("text=/posted successfully/i"),
+        page.locator(".sharing-nba-framework__success-toast-v2"),
+    ]
+    for locator in candidates:
+        try:
+            if locator.count() == 0:
+                continue
+            try:
+                if locator.first.is_visible():
+                    return True
+            except PlaywrightError:
+                pass
+            return True
+        except PlaywrightError:
+            continue
+    return False
